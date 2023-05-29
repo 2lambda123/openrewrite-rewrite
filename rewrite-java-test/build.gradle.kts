@@ -9,9 +9,19 @@ dependencies {
 
     testImplementation("io.github.classgraph:classgraph:latest.release")
     testImplementation("org.junit-pioneer:junit-pioneer:2.0.0")
+
     testRuntimeOnly(project(":rewrite-java-17"))
     testRuntimeOnly("junit:junit:4.13.2") {
         because("Used for RemoveUnneededAssertionTest")
+    }
+    testRuntimeOnly("com.google.code.findbugs:jsr305:3.0.2") {
+        because("Used for StandardizeNullabilityAnnotationsTest, UseJavaxNullabilityAnnotations and UseOpenRewriteNullabilityAnnotations")
+    }
+    testRuntimeOnly("org.springframework:spring-core:6.0.7") {
+        because("Used for StandardizeNullabilityAnnotationsTest and UseSpringNullabilityAnnotations")
+    }
+    testRuntimeOnly("jakarta.annotation:jakarta.annotation-api:2.1.1") {
+        because("Used for UseJakartaNullabilityAnnotations")
     }
     testRuntimeOnly("org.apache.hbase:hbase-shaded-client:2.4.11")
     testRuntimeOnly("com.google.guava:guava:latest.release")

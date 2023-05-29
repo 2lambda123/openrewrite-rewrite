@@ -55,6 +55,7 @@ public abstract class CoordinateBuilder {
             return before(Space.Location.STATEMENT_PREFIX);
         }
 
+        @Override
         public JavaCoordinates replace() {
             return replace(Space.Location.STATEMENT_PREFIX);
         }
@@ -77,11 +78,23 @@ public abstract class CoordinateBuilder {
         }
     }
 
+    public static class AnnotatedType extends Expression {
+
+        AnnotatedType(J.AnnotatedType tree) {
+            super(tree);
+        }
+
+        public JavaCoordinates addAnnotation(Comparator<J.Annotation> idealOrdering) {
+            return new JavaCoordinates(tree, Space.Location.ANNOTATIONS, JavaCoordinates.Mode.BEFORE, idealOrdering);
+        }
+    }
+
     public static class Annotation extends Expression {
         Annotation(J.Annotation tree) {
             super(tree);
         }
 
+        @Override
         public JavaCoordinates replace() {
             return replace(Space.Location.ANNOTATION_PREFIX);
         }
@@ -174,6 +187,7 @@ public abstract class CoordinateBuilder {
             super(tree);
         }
 
+        @Override
         public JavaCoordinates replace() {
             return replace(Space.Location.IDENTIFIER_PREFIX);
         }
@@ -276,6 +290,11 @@ public abstract class CoordinateBuilder {
             super(tree);
         }
 
+        public JavaCoordinates addAnnotation(Comparator<J.Annotation> idealOrdering) {
+            return new JavaCoordinates(tree, Space.Location.ANNOTATIONS, JavaCoordinates.Mode.BEFORE, idealOrdering);
+        }
+
+        @Override
         public JavaCoordinates replace() {
             return replace(Space.Location.PACKAGE_PREFIX);
         }
@@ -300,6 +319,7 @@ public abstract class CoordinateBuilder {
             super(tree);
         }
 
+        @Override
         public JavaCoordinates replace() {
             return replace(Space.Location.YIELD_PREFIX);
         }

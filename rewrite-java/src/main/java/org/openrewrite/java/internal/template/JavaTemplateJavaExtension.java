@@ -24,10 +24,7 @@ import org.openrewrite.java.JavaVisitor;
 import org.openrewrite.java.tree.*;
 import org.openrewrite.marker.Markers;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyList;
@@ -57,6 +54,27 @@ public class JavaTemplateJavaExtension extends JavaTemplateLanguageExtension {
     @Override
     public TreeVisitor<? extends J, Integer> getMixin() {
         return new JavaVisitor<Integer>() {
+
+            @Override
+            public J visitAnnotatedType(J.AnnotatedType annotatedType, Integer integer) {
+                if (annotatedType.isScope(insertionPoint) && loc == ANNOTATIONS) {
+                    List<J.Annotation> generatedAnnotations = substitutions.unsubstitute(templateParser.parseAnnotations(getCursor(), substitutedTemplate));
+                    if (mode == JavaCoordinates.Mode.REPLACEMENT) {
+                        J.AnnotatedType after = annotatedType.withAnnotations(generatedAnnotations);
+                        return autoFormat(after, integer);
+                    } else {
+                        List<J.Annotation> newAnnotations = generatedAnnotations.stream().reduce(
+                            annotatedType.getAnnotations(),
+                            (currentAnnotations, a) -> ListUtils.insertInOrder(annotatedType.getAnnotations(), a, getComparatorOrThrow()),
+                            (before, after) -> after
+                        );
+                        J.AnnotatedType after = annotatedType.withAnnotations(newAnnotations);
+                        return autoFormat(after, integer);
+                    }
+                }
+                return super.visitAnnotatedType(annotatedType, integer);
+            }
+
             @Override
             public J visitAnnotation(J.Annotation annotation, Integer integer) {
                 if (loc.equals(ANNOTATION_PREFIX) && mode.equals(JavaCoordinates.Mode.REPLACEMENT) &&
@@ -437,8 +455,24 @@ public class JavaTemplateJavaExtension extends JavaTemplateLanguageExtension {
 
             @Override
             public J visitPackage(J.Package pkg, Integer integer) {
-                if (loc.equals(PACKAGE_PREFIX) && pkg.isScope(insertionPoint)) {
-                    return pkg.withExpression(substitutions.unsubstitute(templateParser.parsePackage(substitutedTemplate)));
+                if (pkg.isScope(insertionPoint)) {
+                    if (loc == PACKAGE_PREFIX) {
+                        return pkg.withExpression(substitutions.unsubstitute(templateParser.parsePackage(substitutedTemplate)));
+                    } else if (loc == ANNOTATIONS) {
+                        List<J.Annotation> generatedAnnotations = substitutions.unsubstitute(templateParser.parseAnnotations(getCursor(), substitutedTemplate));
+                        if (mode == JavaCoordinates.Mode.REPLACEMENT) {
+                            J.Package after = pkg.withAnnotations(generatedAnnotations);
+                            return autoFormat(after, integer);
+                        } else {
+                            List<J.Annotation> newAnnotations = generatedAnnotations.stream().reduce(
+                                    pkg.getAnnotations(),
+                                    (currentAnnotations, a) -> ListUtils.insertInOrder(pkg.getAnnotations(), a, getComparatorOrThrow()),
+                                    (before, after) -> after
+                            );
+                            J.Package after = pkg.withAnnotations(newAnnotations);
+                            return autoFormat(after, integer);
+                        }
+                    }
                 }
                 return super.visitPackage(pkg, integer);
             }
