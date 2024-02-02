@@ -39,7 +39,14 @@ public class TypeUtils {
     }
 
     public static String toFullyQualifiedName(String fqn) {
-        return fqn.replace('$', '.');
+        // replace every $ that is not prefixed by a dot in an iterative way to handle inner classes whose name is $
+        while (true) {
+            String nxt = fqn.replaceFirst("(?<!\\.)\\$", ".");
+            if (nxt.equals(fqn)) break;
+            else fqn = nxt;
+        }
+
+        return fqn;
     }
 
     public static boolean fullyQualifiedNamesAreEqual(@Nullable String fqn1, @Nullable String fqn2) {
