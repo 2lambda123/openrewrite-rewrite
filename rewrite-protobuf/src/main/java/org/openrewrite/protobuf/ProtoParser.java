@@ -43,7 +43,7 @@ public class ProtoParser implements Parser {
     @Override
     public Stream<SourceFile> parseInputs(Iterable<Input> sourceFiles, @Nullable Path relativeTo, ExecutionContext ctx) {
         ParsingEventListener parsingListener = ParsingExecutionContextView.view(ctx).getParsingListener();
-        return acceptedInputs(sourceFiles).map(input -> {
+        return acceptedInputs(sourceFiles, ctx).map(input -> {
                     parsingListener.startedParsing(input);
                     Path path = input.getRelativePath(relativeTo);
                     try {
@@ -94,6 +94,11 @@ public class ProtoParser implements Parser {
     @Override
     public boolean accept(Path path) {
         return path.toString().endsWith(".proto");
+    }
+
+    @Override
+    public String getDslName() {
+        return "protobuf";
     }
 
     @Override

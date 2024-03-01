@@ -101,13 +101,34 @@ public interface Parser {
 
     boolean accept(Path path);
 
+    default boolean accept(Path path, ExecutionContext ctx) {
+        return ParsingExecutionContextView.view(ctx).accepts(this, path);
+    }
+
+    /**
+     * @deprecated Use {@link #accept(Input, ExecutionContext)} instead.
+     */
+    @Deprecated
     default boolean accept(Input input) {
         return input.isSynthetic() || accept(input.getPath());
     }
 
+    default boolean accept(Input input, ExecutionContext ctx) {
+        return input.isSynthetic() || accept(input.getPath(), ctx);
+    }
+
+    /**
+     * @deprecated Use {@link #acceptedInputs(Iterable, ExecutionContext)} instead.
+     */
+    @Deprecated
     default Stream<Input> acceptedInputs(Iterable<Input> input) {
         return StreamSupport.stream(input.spliterator(), false)
                 .filter(this::accept);
+    }
+
+    default Stream<Input> acceptedInputs(Iterable<Input> input, ExecutionContext ctx) {
+        return StreamSupport.stream(input.spliterator(), false)
+                .filter(i -> this.accept(i, ctx));
     }
 
     default Parser reset() {
@@ -119,9 +140,16 @@ public interface Parser {
      * otherwise returns {@link java.nio.charset.StandardCharsets#UTF_8}
      */
     default Charset getCharset(ExecutionContext ctx) {
-        Charset charset = new ParsingExecutionContextView(ctx).getCharset();
+        Charset charset = ParsingExecutionContextView.view(ctx).getCharset();
         return charset == null ? StandardCharsets.UTF_8 : charset;
     }
+
+    /**
+     * The name of the domain specific language this parser builder produces a parser for.
+     * Used to disambiguate when multiple different parsers are potentially applicable to a source.
+     * For example, determining that MavenParser should be used for a pom.xml instead of XmlParser.
+     */
+    String getDslName();
 
     /**
      * A source input. {@link Input#path} may be a synthetic path and not

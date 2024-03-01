@@ -62,7 +62,7 @@ public class YamlParser implements org.openrewrite.Parser {
     @Override
     public Stream<SourceFile> parseInputs(Iterable<Input> sourceFiles, @Nullable Path relativeTo, ExecutionContext ctx) {
         ParsingEventListener parsingListener = ParsingExecutionContextView.view(ctx).getParsingListener();
-        return acceptedInputs(sourceFiles)
+        return acceptedInputs(sourceFiles, ctx)
                 .map(input -> {
                     parsingListener.startedParsing(input);
                     Path path = input.getRelativePath(relativeTo);
@@ -423,6 +423,11 @@ public class YamlParser implements org.openrewrite.Parser {
     public boolean accept(Path path) {
         String fileName = path.toString();
         return fileName.endsWith(".yml") || fileName.endsWith(".yaml");
+    }
+
+    @Override
+    public String getDslName() {
+        return "yaml";
     }
 
     @Override
