@@ -22,6 +22,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Value;
@@ -42,7 +44,11 @@ import org.openrewrite.maven.tree.ManagedDependency.Defined;
 import org.openrewrite.maven.tree.ManagedDependency.Imported;
 
 import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 import static java.util.Collections.*;
 import static org.openrewrite.internal.StringUtils.matchesGlob;
@@ -89,6 +95,7 @@ public class ResolvedPom {
 
     @NonFinal
     @Builder.Default
+    @Getter(AccessLevel.PRIVATE)
     List<ResolvedManagedDependency> dependencyManagement = emptyList();
 
     @NonFinal
@@ -298,32 +305,64 @@ public class ResolvedPom {
 
     @Nullable
     public String getManagedVersion(String groupId, String artifactId, @Nullable String type, @Nullable String classifier) {
-        for (ResolvedManagedDependency dm : dependencyManagement) {
-            if (dm.matches(groupId, artifactId, type, classifier)) {
-                return getValue(dm.getVersion());
-            }
-        }
+		return getVersionOfResolvedManagedDependencyWithMinimumProximity(
+				dm -> dm.matches(groupId, artifactId, type, classifier), ResolvedManagedDependency::getVersion);
+    }
 
-        return null;
+    @Nullable
+    public String getManagedVersionAlsoFromBom(String groupId, String artifactId, @Nullable String type, @Nullable String classifier) {
+		return getVersionOfResolvedManagedDependencyWithMinimumProximity(
+				dm -> dm.matches(groupId, artifactId, type, classifier) ||
+                        (dm.getRequestedBom() != null
+                        && dm.getRequestedBom().getGroupId().equals(groupId)
+                        && dm.getRequestedBom().getArtifactId().equals(artifactId)),
+                dm1 -> dm1.matches(groupId, artifactId, type, classifier) ? dm1.getVersion() :
+                        dm1.getRequestedBom() == null ? null : dm1.getRequestedBom().getVersion());
+    }
+
+    @Nullable
+    private String getVersionOfResolvedManagedDependencyWithMinimumProximity(
+            Predicate<ResolvedManagedDependency> resolvedManagedDependencyPredicate, Function<ResolvedManagedDependency, String> versionFunction) {
+        ResolvedManagedDependency dependency = getResolvedManagedDependencyWithMinimumProximity(resolvedManagedDependencyPredicate);
+        return dependency == null ? null : getValue(versionFunction.apply(dependency));
+    }
+
+    /**
+     * Get the resolved managed dependency with the minimum proximity that matches the given predicate.
+     * @param resolvedManagedDependencyPredicate Predicate for filter to match the resolved managed dependency.
+     * @return Resolved managed dependency with the minimum proximity that matches the given predicate.
+     */
+    @Nullable
+    public ResolvedManagedDependency getResolvedManagedDependencyWithMinimumProximity(
+            Predicate<ResolvedManagedDependency> resolvedManagedDependencyPredicate) {
+        // Group dependencies by proximity, choose the list with lowest proximity
+        // and return the first dependency in the list, if any found
+        Map.Entry<Long, List<ResolvedManagedDependency>> entry = dependencyManagement.stream()
+                .filter(resolvedManagedDependencyPredicate)
+                .collect(Collectors.groupingBy(ResolvedManagedDependency::getProximity))
+                .entrySet().stream().min(Comparator.comparingLong(Map.Entry::getKey)).orElse(null);
+        return entry == null ? null : entry.getValue().get(0);
+    }
+
+    public void forEachInDependencyManagement(Consumer<? super ResolvedManagedDependency> consumer) {
+        dependencyManagement.forEach(Objects.requireNonNull(consumer));
+    }
+
+    @Nullable
+    private ResolvedManagedDependency getFirstMatchingDependency(String groupId, String artifactId, String type, String classifier) {
+        return dependencyManagement.stream().filter(dm -> dm.matches(groupId, artifactId, type, classifier))
+                .findFirst().orElse(null);
     }
 
     public List<GroupArtifact> getManagedExclusions(String groupId, String artifactId, @Nullable String type, @Nullable String classifier) {
-        for (ResolvedManagedDependency dm : dependencyManagement) {
-            if (dm.matches(groupId, artifactId, type, classifier)) {
-                return dm.getExclusions() == null ? emptyList() : dm.getExclusions();
-            }
-        }
-        return emptyList();
+        ResolvedManagedDependency dependency = getFirstMatchingDependency(groupId, artifactId, type, classifier);
+        return dependency == null || dependency.getExclusions() == null ? emptyList() : dependency.getExclusions();
     }
 
     @Nullable
     public Scope getManagedScope(String groupId, String artifactId, @Nullable String type, @Nullable String classifier) {
-        for (ResolvedManagedDependency dm : dependencyManagement) {
-            if (dm.matches(groupId, artifactId, type, classifier)) {
-                return dm.getScope();
-            }
-        }
-        return null;
+        ResolvedManagedDependency dependency = getFirstMatchingDependency(groupId, artifactId, type, classifier);
+        return dependency == null ? null : dependency.getScope();
     }
 
     public GroupArtifactVersion getValues(GroupArtifactVersion gav) {
@@ -413,14 +452,15 @@ public class ResolvedPom {
         private void resolveParentDependenciesRecursively(List<Pom> pomAncestry) throws MavenDownloadingException {
             Pom pom = pomAncestry.get(0);
 
+            int currentParentProximity = pomAncestry.size();
             for (Profile profile : pom.getProfiles()) {
                 if (profile.isActive(activeProfiles)) {
-                    mergeDependencyManagement(profile.getDependencyManagement(), pom);
+                    mergeDependencyManagement(profile.getDependencyManagement(), pom, currentParentProximity);
                     mergeRequestedDependencies(profile.getDependencies());
                 }
             }
 
-            mergeDependencyManagement(pom.getDependencyManagement(), pom);
+            mergeDependencyManagement(pom.getDependencyManagement(), pom, currentParentProximity);
             mergeRequestedDependencies(pom.getDependencies());
 
             if (pom.getParent() != null) {
@@ -714,7 +754,8 @@ public class ResolvedPom {
             }
         }
 
-        private void mergeDependencyManagement(List<ManagedDependency> incomingDependencyManagement, Pom pom) throws MavenDownloadingException {
+        private void mergeDependencyManagement(List<ManagedDependency> incomingDependencyManagement, Pom pom,
+                int currentParentProximity) throws MavenDownloadingException {
             if (!incomingDependencyManagement.isEmpty()) {
                 if (dependencyManagement == null || dependencyManagement.isEmpty()) {
                     dependencyManagement = new ArrayList<>();
@@ -728,7 +769,8 @@ public class ResolvedPom {
                                 .bomImport(bom.getGav(), pom);
                         dependencyManagement.addAll(ListUtils.map(bom.getDependencyManagement(), dm -> dm
                                 .withRequestedBom(d)
-                                .withBomGav(bom.getGav())));
+                                .withBomGav(bom.getGav())
+                                .withProximity(currentParentProximity + 1)));
                     } else if (d instanceof Defined) {
                         Defined defined = (Defined) d;
                         MavenExecutionContextView.view(ctx)
@@ -739,6 +781,7 @@ public class ResolvedPom {
                                 defined.getScope() == null ? null : Scope.fromName(getValue(defined.getScope())),
                                 getValue(defined.getType()),
                                 getValue(defined.getClassifier()),
+                                currentParentProximity,
                                 ListUtils.map(defined.getExclusions(), (UnaryOperator<GroupArtifact>) ResolvedPom.this::getValues),
                                 defined,
                                 null,

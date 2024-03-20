@@ -22,9 +22,9 @@ import org.openrewrite.internal.StringUtils;
 import org.openrewrite.internal.lang.Nullable;
 import org.openrewrite.marker.SearchResult;
 import org.openrewrite.maven.table.MavenMetadataFailures;
-import org.openrewrite.maven.tree.MavenMetadata;
 import org.openrewrite.maven.tree.MavenResolutionResult;
 import org.openrewrite.maven.tree.ResolvedDependency;
+import org.openrewrite.maven.utilities.MavenMetadataWrapper;
 import org.openrewrite.maven.tree.ResolvedPom;
 import org.openrewrite.semver.LatestRelease;
 import org.openrewrite.semver.Semver;
@@ -229,30 +229,17 @@ public class AddManagedDependency extends ScanningRecipe<AddManagedDependency.Sc
 
             @Nullable
             private String existingManagedDependencyVersion() {
-                return getResolutionResult().getPom().getDependencyManagement().stream()
-                        .map(resolvedManagedDep -> {
-                            if (resolvedManagedDep.matches(groupId, artifactId, type, classifier)) {
-                                return resolvedManagedDep.getGav().getVersion();
-                            } else if (resolvedManagedDep.getRequestedBom() != null
-                                       && resolvedManagedDep.getRequestedBom().getGroupId().equals(groupId)
-                                       && resolvedManagedDep.getRequestedBom().getArtifactId().equals(artifactId)) {
-                                return resolvedManagedDep.getRequestedBom().getVersion();
-                            }
-                            return null;
-                        })
-                        .filter(Objects::nonNull)
-                        .findFirst().orElse(null);
+				return getResolutionResult().getPom().getManagedVersionAlsoFromBom(groupId, artifactId, type, classifier);
             }
 
             @Nullable
             private String findVersionToUse(VersionComparator versionComparator, ResolvedPom containingPom, ExecutionContext ctx) throws MavenDownloadingException {
-                MavenMetadata mavenMetadata = metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, containingPom, ctx));
                 LatestRelease latest = new LatestRelease(versionPattern);
-                return mavenMetadata.getVersioning().getVersions().stream()
-                        .filter(v -> versionComparator.isValid(null, v))
-                        .filter(v -> !Boolean.TRUE.equals(releasesOnly) || latest.isValid(null, v))
-                        .max((v1, v2) -> versionComparator.compare(null, v1, v2))
-                        .orElse(null);
+                return MavenMetadataWrapper.builder()
+                        .mavenMetadata(metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, containingPom, ctx)))
+                        .versionComparator(versionComparator)
+                        .extraFilter(v -> !Boolean.TRUE.equals(releasesOnly) || latest.isValid(null, v))
+                        .build().max().orElse(null);
             }
         });
     }

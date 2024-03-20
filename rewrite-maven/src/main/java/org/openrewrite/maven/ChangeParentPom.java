@@ -21,10 +21,9 @@ import org.openrewrite.*;
 import org.openrewrite.internal.lang.Nullable;
 import org.openrewrite.internal.StringUtils;
 import org.openrewrite.marker.SearchResult;
-import org.openrewrite.maven.table.MavenMetadataFailures;
-import org.openrewrite.maven.tree.MavenMetadata;
 import org.openrewrite.maven.tree.Parent;
 import org.openrewrite.maven.tree.ResolvedPom;
+import org.openrewrite.maven.utilities.MavenMetadataWrapper;
 import org.openrewrite.maven.utilities.RetainVersions;
 import org.openrewrite.semver.Semver;
 import org.openrewrite.semver.VersionComparator;
@@ -37,45 +36,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import static java.util.Collections.emptyList;
 import static org.openrewrite.internal.StringUtils.matchesGlob;
 
 @Value
 @EqualsAndHashCode(callSuper = false)
-public class ChangeParentPom extends Recipe {
-    transient MavenMetadataFailures metadataFailures = new MavenMetadataFailures(this);
-
-    @Option(displayName = "Old group ID",
-            description = "The group ID of the Maven parent pom to be changed away from.",
-            example = "org.springframework.boot")
-    String oldGroupId;
-
-    @Option(displayName = "New group ID",
-            description = "The group ID of the new maven parent pom to be adopted. If this argument is omitted it defaults to the value of `oldGroupId`.",
-            example = "org.springframework.boot",
-            required = false)
-    @Nullable
-    String newGroupId;
-
-    @Option(displayName = "Old artifact ID",
-            description = "The artifact ID of the maven parent pom to be changed away from.",
-            example = "spring-boot-starter-parent")
-    String oldArtifactId;
-
-    @Option(displayName = "New artifact ID",
-            description = "The artifact ID of the new maven parent pom to be adopted. If this argument is omitted it defaults to the value of `oldArtifactId`.",
-            example = "spring-boot-starter-parent",
-            required = false)
-    @Nullable
-    String newArtifactId;
-
-    @Option(displayName = "New version",
-            description = "An exact version number or node-style semver selector used to select the version number.",
-            example = "29.X")
-    String newVersion;
-
+public class ChangeParentPom extends AbstractChangeGroupIdArtifactIdAndVersion {
     @Option(displayName = "Old relative path",
             description = "The relativePath of the maven parent pom to be changed away from.",
             example = "../../pom.xml",
@@ -89,14 +56,6 @@ public class ChangeParentPom extends Recipe {
             required = false)
     @Nullable
     String newRelativePath;
-
-    @Option(displayName = "Version pattern",
-            description = "Allows version selection to be extended beyond the original Node Semver semantics. So for example," +
-                          "Setting 'version' to \"25-29\" can be paired with a metadata pattern of \"-jre\" to select Guava 29.0-jre",
-            example = "-jre",
-            required = false)
-    @Nullable
-    String versionPattern;
 
     @Option(displayName = "Allow version downgrades",
             description = "If the new parent has the same group/artifact, this flag can be used to only upgrade the " +
@@ -114,7 +73,17 @@ public class ChangeParentPom extends Recipe {
     @Nullable
     List<String> retainVersions;
 
-    @Override
+    public ChangeParentPom(String oldGroupId, String newGroupId, String oldArtifactId, String newArtifactId,
+			@Nullable String newVersion, @Nullable String oldRelativePath, @Nullable String newRelativePath, @Nullable String versionPattern,
+            @Nullable Boolean allowVersionDowngrades, @Nullable List<String> retainVersions) {
+        super(oldGroupId, oldArtifactId, newGroupId, newArtifactId, newVersion, versionPattern);
+        this.oldRelativePath = oldRelativePath;
+        this.newRelativePath = newRelativePath;
+        this.allowVersionDowngrades = allowVersionDowngrades;
+        this.retainVersions = retainVersions;
+    }
+
+        @Override
     public String getDisplayName() {
         return "Change Maven parent";
     }
@@ -191,8 +160,7 @@ public class ChangeParentPom extends Recipe {
                         String targetArtifactId = newArtifactId == null ? currentArtifactId : newArtifactId;
                         String targetRelativePath = newRelativePath == null ? tag.getChildValue("relativePath").orElse(oldRelativePath) : newRelativePath;
                         try {
-                            Optional<String> targetVersion = findAcceptableVersion(targetGroupId, targetArtifactId, oldVersion, ctx);
-                            if (targetVersion.isPresent()) {
+							findAcceptableVersion(targetGroupId, targetArtifactId, oldVersion, ctx).ifPresent(targetVersion -> {
                                 List<XmlVisitor<ExecutionContext>> changeParentTagVisitors = new ArrayList<>();
                                 if (!currentGroupId.equals(targetGroupId)) {
                                     changeParentTagVisitors.add(new ChangeTagValueVisitor<>(t.getChild("groupId").get(), targetGroupId));
@@ -202,8 +170,8 @@ public class ChangeParentPom extends Recipe {
                                     changeParentTagVisitors.add(new ChangeTagValueVisitor<>(t.getChild("artifactId").get(), targetArtifactId));
                                 }
 
-                                if (!oldVersion.equals(targetVersion.get())) {
-                                    changeParentTagVisitors.add(new ChangeTagValueVisitor<>(t.getChild("version").get(), targetVersion.get()));
+                                if (!oldVersion.equals(targetVersion)) {
+                                    changeParentTagVisitors.add(new ChangeTagValueVisitor<>(t.getChild("version").get(), targetVersion));
                                 }
 
                                 // Update or add relativePath
@@ -229,7 +197,7 @@ public class ChangeParentPom extends Recipe {
                                     maybeUpdateModel();
                                     doAfterVisit(new RemoveRedundantDependencyVersions(null, null, true, null).getVisitor());
                                 }
-                            }
+                            });
                         } catch (MavenDownloadingException e) {
                             return e.warn(tag);
                         }
@@ -258,24 +226,22 @@ public class ChangeParentPom extends Recipe {
 
             private Optional<String> findAcceptableVersion(String groupId, String artifactId, String currentVersion,
                                                                 ExecutionContext ctx) throws MavenDownloadingException {
-                String finalCurrentVersion = !Semver.isVersion(currentVersion) ? "0.0.0" : currentVersion;
+                String finalCurrentVersion = Semver.isVersion(currentVersion) ? currentVersion : "0.0.0";
 
                 if (availableVersions == null) {
-                    MavenMetadata mavenMetadata = metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx));
-                    availableVersions = mavenMetadata.getVersioning().getVersions().stream()
-                            .filter(v -> versionComparator.isValid(finalCurrentVersion, v))
-                            .filter(v -> Boolean.TRUE.equals(allowVersionDowngrades) || versionComparator.compare(finalCurrentVersion, finalCurrentVersion, v) <= 0)
-                            .collect(Collectors.toList());
+					availableVersions = MavenMetadataWrapper.builder()
+                            .mavenMetadata(metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx)))
+                            .versionComparator(versionComparator)
+                            .version(finalCurrentVersion)
+                            .extraFilter(v -> Boolean.TRUE.equals(allowVersionDowngrades) || versionComparator.compare(finalCurrentVersion, finalCurrentVersion, v) <= 0)
+                            .build().filter();
                 }
                 if (Boolean.TRUE.equals(allowVersionDowngrades)) {
                     return availableVersions.stream()
                             .max((v1, v2) -> versionComparator.compare(finalCurrentVersion, v1, v2));
                 }
                 Optional<String> upgradedVersion = versionComparator.upgrade(finalCurrentVersion, availableVersions);
-                if (upgradedVersion.isPresent()) {
-                    return upgradedVersion;
-                }
-                return availableVersions.stream().filter(finalCurrentVersion::equals).findFirst();
+                return upgradedVersion.isPresent() ? upgradedVersion : availableVersions.stream().filter(finalCurrentVersion::equals).findFirst();
             }
         });
     }

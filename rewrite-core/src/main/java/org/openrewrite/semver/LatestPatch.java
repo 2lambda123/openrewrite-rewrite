@@ -48,9 +48,12 @@ public class LatestPatch implements VersionComparator {
 
         //noinspection ConstantConditions
         return TildeRange.build("~" + Semver.majorVersion(currentVersion) + "." + Semver.minorVersion(currentVersion), metadataPattern)
-                .<VersionComparator>getValue()
+                .getValue()
                 .compare(currentVersion, v1, v2);
     }
+
+    @Override
+    public boolean canDeriveNewVersion(String version) {return isValid(version, version);}
 
     public static Validated<LatestPatch> build(String toVersion, @Nullable String metadataPattern) {
         return "latest.patch".equalsIgnoreCase(toVersion) ?

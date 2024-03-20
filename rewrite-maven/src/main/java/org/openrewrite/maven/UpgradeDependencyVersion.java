@@ -21,8 +21,8 @@ import org.openrewrite.*;
 import org.openrewrite.internal.lang.Nullable;
 import org.openrewrite.maven.table.MavenMetadataFailures;
 import org.openrewrite.maven.tree.*;
+import org.openrewrite.maven.utilities.MavenMetadataWrapper;
 import org.openrewrite.maven.utilities.RetainVersions;
-import org.openrewrite.semver.LatestPatch;
 import org.openrewrite.semver.Semver;
 import org.openrewrite.semver.VersionComparator;
 import org.openrewrite.xml.AddToTagVisitor;
@@ -263,17 +263,18 @@ public class UpgradeDependencyVersion extends ScanningRecipe<Set<GroupArtifact>>
                         return upgradeVersion(ctx, t, managedDependency.getRequested().getVersion(), groupId, artifactId, version);
                     }
                 } else {
-                    for (ResolvedManagedDependency dm : getResolutionResult().getPom().getDependencyManagement()) {
-                        if (dm.getBomGav() != null) {
-                            String group = getResolutionResult().getPom().getValue(tag.getChildValue("groupId").orElse(getResolutionResult().getPom().getGroupId()));
-                            String artifactId = getResolutionResult().getPom().getValue(tag.getChildValue("artifactId").orElse(""));
-                            if (!projectArtifacts.contains(new GroupArtifact(group, artifactId))) {
-                                ResolvedGroupArtifactVersion bom = dm.getBomGav();
-                                if (Objects.equals(group, bom.getGroupId()) &&
-                                    Objects.equals(artifactId, bom.getArtifactId())) {
-                                    return upgradeVersion(ctx, t, requireNonNull(dm.getRequestedBom()).getVersion(), bom.getGroupId(), bom.getArtifactId(), bom.getVersion());
-                                }
-                            }
+                    ResolvedPom pom = getResolutionResult().getPom();
+                    String group = pom.getValue(tag.getChildValue("groupId").orElse(pom.getGroupId()));
+                    String artifactId = pom.getValue(tag.getChildValue("artifactId").orElse(""));
+
+                    if (!projectArtifacts.contains(new GroupArtifact(group, artifactId))) {
+                        @Nullable
+                        ResolvedManagedDependency dependency = pom.getResolvedManagedDependencyWithMinimumProximity(dm -> dm.getBomGav() != null &&
+                                Objects.equals(group, dm.getBomGav().getGroupId()) &&
+                                Objects.equals(artifactId, dm.getBomGav().getArtifactId()));
+                        if (dependency != null && dependency.getRequestedBom() != null) {
+                            ResolvedGroupArtifactVersion bom = dependency.getBomGav();
+                            return upgradeVersion(ctx, t, requireNonNull(dependency.getRequestedBom()).getVersion(), bom.getGroupId(), bom.getArtifactId(), bom.getVersion());
                         }
                     }
                 }
@@ -309,8 +310,9 @@ public class UpgradeDependencyVersion extends ScanningRecipe<Set<GroupArtifact>>
             }
 
             @Nullable
-            public TreeVisitor<Xml, ExecutionContext> upgradeVersion(ExecutionContext ctx, Xml.Tag tag, @Nullable String requestedVersion, String groupId, String artifactId, String version2) throws MavenDownloadingException {
-                String newerVersion = findNewerVersion(groupId, artifactId, version2, ctx);
+            public TreeVisitor<Xml, ExecutionContext> upgradeVersion(ExecutionContext ctx, Xml.Tag tag, @Nullable String requestedVersion,
+                    String groupId, String artifactId, String currentVersion) throws MavenDownloadingException {
+                String newerVersion = findNewerVersion(groupId, artifactId, currentVersion, ctx);
                 if (newerVersion == null) {
                     return null;
                 } else if (requestedVersion != null && requestedVersion.startsWith("${")) {
@@ -328,22 +330,20 @@ public class UpgradeDependencyVersion extends ScanningRecipe<Set<GroupArtifact>>
 
             @Nullable
             private String findNewerVersion(String groupId, String artifactId, String version, ExecutionContext ctx) throws MavenDownloadingException {
-                String finalVersion = !Semver.isVersion(version) ? "0.0.0" : version;
+                String finalVersion = Semver.isVersion(version) ? version : "0.0.0";
 
                 // in the case of "latest.patch", a new version can only be derived if the
                 // current version is a semantic version
-                if (versionComparator instanceof LatestPatch && !versionComparator.isValid(finalVersion, finalVersion)) {
+                if (!versionComparator.canDeriveNewVersion(finalVersion)) {
                     return null;
                 }
 
                 try {
-                    MavenMetadata mavenMetadata = metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx));
-                    List<String> versions = new ArrayList<>();
-                    for (String v : mavenMetadata.getVersioning().getVersions()) {
-                        if (versionComparator.isValid(finalVersion, v)) {
-                            versions.add(v);
-                        }
-                    }
+                    List<String> versions = MavenMetadataWrapper.builder()
+                            .mavenMetadata(metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx)))
+                            .versionComparator(versionComparator)
+                            .version(finalVersion)
+                            .build().filter();
                     // handle upgrades from non semver versions like "org.springframework.cloud:spring-cloud-dependencies:Camden.SR5"
                     if (!Semver.isVersion(finalVersion) && !versions.isEmpty()) {
                         versions.sort(versionComparator);

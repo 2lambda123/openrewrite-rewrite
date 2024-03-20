@@ -22,15 +22,14 @@ import org.openrewrite.internal.lang.Nullable;
 import org.openrewrite.marker.ci.GithubActionsBuildEnvironment;
 import org.openrewrite.maven.search.FindPlugin;
 import org.openrewrite.maven.table.MavenMetadataFailures;
-import org.openrewrite.maven.tree.MavenMetadata;
 import org.openrewrite.maven.tree.ResolvedPom;
+import org.openrewrite.maven.utilities.MavenMetadataWrapper;
 import org.openrewrite.semver.Semver;
 import org.openrewrite.semver.VersionComparator;
 import org.openrewrite.xml.AddToTagVisitor;
 import org.openrewrite.xml.ChangeTagValueVisitor;
 import org.openrewrite.xml.tree.Xml;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Optional;
 
@@ -155,13 +154,11 @@ public class UpgradePluginVersion extends Recipe {
 
             private Optional<String> findNewerDependencyVersion(String groupId, String artifactId,
                                                                 String currentVersion, ExecutionContext ctx) throws MavenDownloadingException {
-                MavenMetadata mavenMetadata = metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx));
-                Collection<String> availableVersions = new ArrayList<>();
-                for (String v : mavenMetadata.getVersioning().getVersions()) {
-                    if (versionComparator.isValid(currentVersion, v)) {
-                        availableVersions.add(v);
-                    }
-                }
+				Collection<String> availableVersions = MavenMetadataWrapper.builder()
+                        .mavenMetadata(metadataFailures.insertRows(ctx, () -> downloadMetadata(groupId, artifactId, ctx)))
+                        .versionComparator(versionComparator)
+                        .version(currentVersion)
+                        .build().filter();
                 return versionComparator.upgrade(currentVersion, availableVersions);
             }
         });
