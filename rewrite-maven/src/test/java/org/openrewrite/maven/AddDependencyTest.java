@@ -16,12 +16,12 @@
 package org.openrewrite.maven;
 
 import org.intellij.lang.annotations.Language;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.openrewrite.DocumentExample;
 import org.openrewrite.Issue;
-import org.openrewrite.internal.lang.Nullable;
 import org.openrewrite.java.JavaParser;
 import org.openrewrite.test.RecipeSpec;
 import org.openrewrite.test.RewriteTest;
@@ -378,6 +378,110 @@ class AddDependencyTest implements RewriteTest {
                             </dependency>
                         </dependencies>
                     </project>
+                """
+            )
+          )
+        );
+    }
+
+    @Test
+    void doNotAddBecauseAlreadyTransitiveNoCompileScope() {
+        rewriteRun(
+          spec -> spec.recipe(addDependency("org.junit.jupiter:junit-jupiter-api:5.10.3", null, true)),
+          mavenProject(
+            "project",
+            srcTestJava(
+              java(
+                """
+                  class MyTest {
+                      @org.junit.jupiter.api.Test
+                      void test() {}
+                  }
+                  """
+              )
+            ),
+            pomXml(
+              """
+                <project>
+                    <groupId>com.mycompany.app</groupId>
+                    <artifactId>my-app</artifactId>
+                    <version>1</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.junit.jupiter</groupId>
+                            <artifactId>junit-jupiter-engine</artifactId>
+                            <version>5.7.1</version>
+                            <scope>test</scope>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """
+            )
+          )
+        );
+    }
+
+    @Test
+    void addDependencyAcceptsTransitiveAlreadyInTestScope() {
+        rewriteRun(
+          spec -> spec.recipe(addDependency("org.junit.jupiter:junit-jupiter-api:5.10.3", "org.junit.jupiter..*", true)),
+          mavenProject(
+            "project",
+            srcMainJava(
+              java(
+                """
+                  class MyMain {
+                      @org.junit.jupiter.api.Test
+                      void test() {}
+                  }
+                  """
+              )
+            ),
+            srcTestJava(
+              java(
+                """
+                  class MyTest {
+                      @org.junit.jupiter.api.Test
+                      void test() {}
+                  }
+                  """
+              )
+            ),
+            pomXml(
+              """
+                <project>
+                    <groupId>com.mycompany.app</groupId>
+                    <artifactId>my-app</artifactId>
+                    <version>1</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.junit.jupiter</groupId>
+                            <artifactId>junit-jupiter-engine</artifactId>
+                            <version>5.7.1</version>
+                            <scope>test</scope>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """,
+              """
+                <project>
+                    <groupId>com.mycompany.app</groupId>
+                    <artifactId>my-app</artifactId>
+                    <version>1</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.junit.jupiter</groupId>
+                            <artifactId>junit-jupiter-api</artifactId>
+                            <version>5.10.3</version>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.junit.jupiter</groupId>
+                            <artifactId>junit-jupiter-engine</artifactId>
+                            <version>5.7.1</version>
+                            <scope>test</scope>
+                        </dependency>
+                    </dependencies>
+                </project>
                 """
             )
           )
@@ -1047,35 +1151,35 @@ class AddDependencyTest implements RewriteTest {
                   <groupId>org.springframework.samples</groupId>
                   <artifactId>spring-petclinic</artifactId>
                   <version>2.7.3</version>
-                
+
                   <parent>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-parent</artifactId>
                     <version>3.0.5</version>
                   </parent>
                   <name>petclinic</name>
-                
+
                   <properties>
                     <jakarta-servlet.version>5.0.0</jakarta-servlet.version>
-                
+
                     <java.version>17</java.version>
                     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
                     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-                
+
                     <webjars-bootstrap.version>5.1.3</webjars-bootstrap.version>
                     <webjars-font-awesome.version>4.7.0</webjars-font-awesome.version>
-                
+
                     <jacoco.version>0.8.8</jacoco.version>
-                
+
                   </properties>
-                
+
                   <dependencies>
                     <dependency>
                       <groupId>org.springframework.boot</groupId>
                       <artifactId>spring-boot-starter-data-jpa</artifactId>
                     </dependency>
                   </dependencies>
-                
+
                 </project>
                 """,
               """
@@ -1084,28 +1188,28 @@ class AddDependencyTest implements RewriteTest {
                   <groupId>org.springframework.samples</groupId>
                   <artifactId>spring-petclinic</artifactId>
                   <version>2.7.3</version>
-                
+
                   <parent>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-parent</artifactId>
                     <version>3.0.5</version>
                   </parent>
                   <name>petclinic</name>
-                
+
                   <properties>
                     <jakarta-servlet.version>5.0.0</jakarta-servlet.version>
-                
+
                     <java.version>17</java.version>
                     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
                     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-                
+
                     <webjars-bootstrap.version>5.1.3</webjars-bootstrap.version>
                     <webjars-font-awesome.version>4.7.0</webjars-font-awesome.version>
-                
+
                     <jacoco.version>0.8.8</jacoco.version>
-                
+
                   </properties>
-                
+
                   <dependencies>
                     <dependency>
                       <groupId>jakarta.xml.bind</groupId>
@@ -1116,7 +1220,7 @@ class AddDependencyTest implements RewriteTest {
                       <artifactId>spring-boot-starter-data-jpa</artifactId>
                     </dependency>
                   </dependencies>
-                
+
                 </project>
                 """
             )
