@@ -23,6 +23,7 @@ import org.openrewrite.InMemoryExecutionContext;
 import org.openrewrite.Parser;
 import org.openrewrite.SourceFile;
 import org.openrewrite.internal.EncodingDetectingInputStream;
+import org.openrewrite.marker.TypeReference;
 import org.openrewrite.tree.ParseError;
 import org.openrewrite.tree.ParsingEventListener;
 import org.openrewrite.tree.ParsingExecutionContextView;
@@ -33,6 +34,7 @@ import org.openrewrite.xml.tree.Xml;
 
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -94,12 +96,24 @@ public class XmlParser implements Parser {
                         is.isCharsetBomMarked()
                 ).visitDocument(parser.document());
                 parsingListener.parsed(input, document);
+                if (isSpringXmlDocument(document)) {
+                    document = (Xml.Document) addJavaTypeOrPackageMarkers().visitDocument(document, ctx);
+                }
                 return requirePrintEqualsInput(document, input, relativeTo, ctx);
             } catch (Throwable t) {
                 ctx.getOnError().accept(t);
                 return ParseError.build(this, input, relativeTo, ctx, t);
             }
         });
+    }
+
+    private boolean isSpringXmlDocument(Xml.Document document) {
+        for (Xml.Attribute attrib : document.getRoot().getAttributes()) {
+            if (attrib.getKeyAsString().equals("xsi:schemaLocation") && attrib.getValueAsString().contains("www.springframework.org/schema/beans")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -160,5 +174,35 @@ public class XmlParser implements Parser {
         public String getDslName() {
             return "xml";
         }
+    }
+
+    private XmlVisitor<ExecutionContext> addJavaTypeOrPackageMarkers() {
+        XPathMatcher classXPath = new XPathMatcher("//@class[contains(., '.')]");
+        XPathMatcher typeXPath = new XPathMatcher("//@type[contains(., '.')]");
+        XPathMatcher tags = new XPathMatcher("//value[contains(text(), '.')]");
+
+        return new XmlVisitor<ExecutionContext>() {
+
+            @Override
+            public Xml visitAttribute(Xml.Attribute attribute, ExecutionContext ctx) {
+                Xml.Attribute attrib = (Xml.Attribute) super.visitAttribute(attribute, ctx);
+                if (classXPath.matches(getCursor()) || typeXPath.matches(getCursor())) {
+                    return attrib.withMarkers(attrib.getMarkers().withMarkers(Collections.singletonList(new TypeReference(attrib.getId(), "Java"))));
+
+                }
+                return attrib;
+            }
+
+            @Override
+            public Xml visitTag(Xml.Tag tag, ExecutionContext ctx) {
+                Xml.Tag tg = (Xml.Tag) super.visitTag(tag, ctx);
+                if (tags.matches(getCursor())) {
+                    if (tg.getValue().isPresent()) {
+                        return tg.withMarkers(tg.getMarkers().withMarkers(Collections.singletonList(new TypeReference(tg.getId(), "Java"))));
+                    }
+                }
+                return tg;
+            }
+        };
     }
 }
